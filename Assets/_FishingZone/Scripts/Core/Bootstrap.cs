@@ -64,8 +64,8 @@ namespace FishingZone.Core
                 return;
             }
 
-            // The menu is driven by UI input only; gameplay maps stay off until a gameplay scene asks for one.
-            _gameInput.SetUIEnabled(true);
+            // The menu is driven by UI input only; other maps stay off until a scene asks for them.
+            _gameInput.EnableMap(InputMap.UI);
             _gameFlow.GoTo(GameState.MainMenu);
         }
 

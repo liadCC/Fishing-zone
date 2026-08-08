@@ -39,22 +39,59 @@ namespace FishingZone.Core.DevTools
             }
         }
 
-        [ContextMenu("Input/Switch To Player Map")]
-        private void SwitchToPlayer() => Switch(InputMap.Player);
+        [ContextMenu("Input/Switch Exclusively To Player")]
+        private void SwitchToPlayer() => Exclusive(InputMap.Player);
 
-        [ContextMenu("Input/Switch To Boat Map")]
-        private void SwitchToBoat() => Switch(InputMap.Boat);
+        [ContextMenu("Input/Switch Exclusively To Boat")]
+        private void SwitchToBoat() => Exclusive(InputMap.Boat);
 
-        [ContextMenu("Input/Switch To Fishing Map")]
-        private void SwitchToFishing() => Switch(InputMap.Fishing);
+        [ContextMenu("Input/Switch Exclusively To Fishing")]
+        private void SwitchToFishing() => Exclusive(InputMap.Fishing);
 
-        [ContextMenu("Input/Disable Gameplay Input")]
-        private void DisableGameplayInput()
+        [ContextMenu("Input/Add Player Map")]
+        private void AddPlayer() => Add(InputMap.Player);
+
+        [ContextMenu("Input/Add Boat Map")]
+        private void AddBoat() => Add(InputMap.Boat);
+
+        [ContextMenu("Input/Add Fishing Map")]
+        private void AddFishing() => Add(InputMap.Fishing);
+
+        [ContextMenu("Input/Add UI Map")]
+        private void AddUI() => Add(InputMap.UI);
+
+        [ContextMenu("Input/Remove Player Map")]
+        private void RemovePlayer() => Remove(InputMap.Player);
+
+        [ContextMenu("Input/Remove Boat Map")]
+        private void RemoveBoat() => Remove(InputMap.Boat);
+
+        [ContextMenu("Input/Remove Fishing Map")]
+        private void RemoveFishing() => Remove(InputMap.Fishing);
+
+        [ContextMenu("Input/Remove UI Map")]
+        private void RemoveUI() => Remove(InputMap.UI);
+
+        [ContextMenu("Input/Disable All Maps")]
+        private void DisableAllMaps()
         {
-            if (_gameInput != null)
+            if (ResolveInput() != null)
             {
-                _gameInput.DisableGameplayInput();
+                _gameInput.DisableAllMaps();
             }
+        }
+
+        [ContextMenu("Input/Log Active Maps")]
+        private void LogActiveMaps()
+        {
+            if (ResolveInput() == null)
+            {
+                return;
+            }
+
+            GameLog.Info(LogCategory.Input, _gameInput.ActiveMaps.Count == 0
+                ? "Active maps: none"
+                : $"Active maps: {string.Join(", ", _gameInput.ActiveMaps)}");
         }
 
         private void Request(GameState state)
@@ -74,21 +111,45 @@ namespace FishingZone.Core.DevTools
             _gameFlow.GoTo(state);
         }
 
-        private void Switch(InputMap map)
+        private void Exclusive(InputMap map)
+        {
+            if (ResolveInput() != null)
+            {
+                _gameInput.SwitchTo(map);
+            }
+        }
+
+        private void Add(InputMap map)
+        {
+            if (ResolveInput() != null)
+            {
+                _gameInput.EnableMap(map);
+            }
+        }
+
+        private void Remove(InputMap map)
+        {
+            if (ResolveInput() != null)
+            {
+                _gameInput.DisableMap(map);
+            }
+        }
+
+        private GameInput ResolveInput()
         {
             if (!Application.isPlaying)
             {
                 GameLog.Warn(LogCategory.Input, "Enter Play Mode before using the dev menu.");
-                return;
+                return null;
             }
 
             if (_gameInput == null)
             {
                 GameLog.Error(LogCategory.Input, "GameFlowDevMenu has no GameInput assigned.");
-                return;
+                return null;
             }
 
-            _gameInput.SwitchTo(map);
+            return _gameInput;
         }
     }
 }

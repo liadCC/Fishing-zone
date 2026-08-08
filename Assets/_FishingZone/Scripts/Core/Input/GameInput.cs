@@ -1,28 +1,30 @@
 using System;
+using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.InputSystem;
 
 namespace FishingZone.Core.Input
 {
     /// <summary>
-    /// Owns the project's single Input Actions asset and decides which Action Map is live.
-    /// Gameplay scripts read actions through serialized InputActionReference fields; they never
-    /// poll keys and never enable maps themselves, so control context stays in one place.
+    /// Owns the project's single Input Actions asset and tracks which Action Maps are enabled.
+    /// Any combination of maps may be live at once: whether Player input should coexist with Boat,
+    /// Fishing or UI input is a gameplay decision belonging to the system that owns the situation,
+    /// not something this class is in a position to decide.
+    /// Gameplay scripts read actions through serialized InputActionReference fields; they never poll
+    /// keys and never enable maps themselves, so control context stays in one place.
     /// </summary>
     public class GameInput : MonoBehaviour
     {
         [SerializeField]
         private InputActionAsset _actions;
 
-        /// <summary>
-        /// Exactly one gameplay map is active at a time: standing on deck, steering and fishing
-        /// are mutually exclusive contexts, which is also what stops two systems reading the same key.
-        /// </summary>
-        public InputMap? ActiveGameplayMap { get; private set; }
+        private readonly HashSet<InputMap> _activeMaps = new HashSet<InputMap>();
 
-        public bool IsUIEnabled { get; private set; }
+        /// <summary>Read-only view of every map currently enabled.</summary>
+        public IReadOnlyCollection<InputMap> ActiveMaps => _activeMaps;
 
-        public event Action<InputMap?> ActiveGameplayMapChanged;
+        /// <summary>Raised after any change to the set of enabled maps. Listeners query <see cref="IsMapEnabled"/>.</summary>
+        public event Action ActiveMapsChanged;
 
         /// <summary>Exposed so systems can resolve actions when an Inspector reference is impractical.</summary>
         public InputActionAsset Actions => _actions;
@@ -35,7 +37,7 @@ namespace FishingZone.Core.Input
                 return;
             }
 
-            // Start with everything off so the first explicit SwitchTo defines the context.
+            // Start with everything off so the first explicit call defines the context.
             _actions.Disable();
         }
 
@@ -45,85 +47,110 @@ namespace FishingZone.Core.Input
             {
                 _actions.Disable();
             }
+
+            _activeMaps.Clear();
+        }
+
+        public bool IsMapEnabled(InputMap map)
+        {
+            return _activeMaps.Contains(map);
         }
 
         /// <summary>
-        /// Makes <paramref name="map"/> the active gameplay map and disables the previous one.
-        /// Passing <see cref="InputMap.UI"/> here is a mistake; use <see cref="SetUIEnabled"/> instead,
-        /// because UI input is layered on top of gameplay rather than replacing it.
+        /// Enables one map without touching any other. This is the additive path that lets
+        /// contextual input layer on top of what is already live.
         /// </summary>
-        public void SwitchTo(InputMap map)
+        public void EnableMap(InputMap map)
         {
-            if (map == InputMap.UI)
+            if (ApplyMap(map, true))
             {
-                GameLog.Error(LogCategory.Input, "SwitchTo(UI) is not valid. Use SetUIEnabled to toggle the UI map.");
-                return;
+                LogActiveMaps();
+                ActiveMapsChanged?.Invoke();
             }
+        }
 
+        /// <summary>Disables one map without touching any other.</summary>
+        public void DisableMap(InputMap map)
+        {
+            if (ApplyMap(map, false))
+            {
+                LogActiveMaps();
+                ActiveMapsChanged?.Invoke();
+            }
+        }
+
+        /// <summary>
+        /// Replaces the whole set in one operation: everything listed is enabled, everything else disabled.
+        /// </summary>
+        public void SetActiveMaps(params InputMap[] maps)
+        {
             if (_actions == null)
             {
                 return;
             }
 
-            if (ActiveGameplayMap.HasValue)
+            bool changed = false;
+
+            foreach (InputMap map in Enum.GetValues(typeof(InputMap)))
             {
-                FindMap(ActiveGameplayMap.Value)?.Disable();
+                bool shouldBeEnabled = maps != null && Array.IndexOf(maps, map) >= 0;
+                changed |= ApplyMap(map, shouldBeEnabled);
+            }
+
+            if (changed)
+            {
+                LogActiveMaps();
+                ActiveMapsChanged?.Invoke();
+            }
+        }
+
+        /// <summary>
+        /// Convenience for the common exclusive case: make <paramref name="map"/> the only live map.
+        /// This is a caller-chosen policy, not a rule enforced by GameInput.
+        /// </summary>
+        public void SwitchTo(InputMap map)
+        {
+            SetActiveMaps(map);
+        }
+
+        public void DisableAllMaps()
+        {
+            SetActiveMaps();
+        }
+
+        /// <summary>Returns true when the map's enabled state actually changed.</summary>
+        private bool ApplyMap(InputMap map, bool enable)
+        {
+            if (_actions == null || _activeMaps.Contains(map) == enable)
+            {
+                return false;
             }
 
             InputActionMap target = FindMap(map);
             if (target == null)
             {
-                ActiveGameplayMap = null;
-                ActiveGameplayMapChanged?.Invoke(null);
-                return;
+                return false;
             }
 
-            target.Enable();
-            ActiveGameplayMap = map;
-            GameLog.Info(LogCategory.Input, $"Active gameplay map: {map}");
-
-            ActiveGameplayMapChanged?.Invoke(map);
-        }
-
-        /// <summary>Disables all gameplay input, for example during a scene transition or a cutscene.</summary>
-        public void DisableGameplayInput()
-        {
-            if (_actions == null || !ActiveGameplayMap.HasValue)
+            if (enable)
             {
-                return;
-            }
-
-            FindMap(ActiveGameplayMap.Value)?.Disable();
-            ActiveGameplayMap = null;
-            GameLog.Info(LogCategory.Input, "Gameplay input disabled.");
-
-            ActiveGameplayMapChanged?.Invoke(null);
-        }
-
-        public void SetUIEnabled(bool enabled)
-        {
-            if (_actions == null)
-            {
-                return;
-            }
-
-            InputActionMap ui = FindMap(InputMap.UI);
-            if (ui == null)
-            {
-                return;
-            }
-
-            if (enabled)
-            {
-                ui.Enable();
+                target.Enable();
+                _activeMaps.Add(map);
             }
             else
             {
-                ui.Disable();
+                target.Disable();
+                _activeMaps.Remove(map);
             }
 
-            IsUIEnabled = enabled;
-            GameLog.Info(LogCategory.Input, $"UI map {(enabled ? "enabled" : "disabled")}.");
+            return true;
+        }
+
+        private void LogActiveMaps()
+        {
+            GameLog.Info(LogCategory.Input, _activeMaps.Count == 0
+                ? "Active maps: none"
+                : $"Active maps: {string.Join(", ", _activeMaps)}");
         }
 
         private InputActionMap FindMap(InputMap map)
