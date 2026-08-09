@@ -33,6 +33,12 @@ namespace FishingZone.Player
 
         public IInteractable CurrentTarget { get; private set; }
 
+        /// <summary>
+        /// While set, this is the target regardless of where the player is looking.
+        /// A station uses it so that an occupied seat cannot lose the key that releases it.
+        /// </summary>
+        private IInteractable _capturedTarget;
+
         private bool _isConfigured;
 
         private void Awake()
@@ -46,7 +52,38 @@ namespace FishingZone.Player
 
         private void OnDisable()
         {
+            _capturedTarget = null;
             SetTarget(null);
+        }
+
+        /// <summary>
+        /// Forces the focus onto <paramref name="target"/> until it is released, bypassing the ray.
+        /// The change is always announced even if the target is unchanged, because a captured
+        /// interactable usually wants to show different prompt text once it owns the focus.
+        /// </summary>
+        public void CaptureFocus(IInteractable target)
+        {
+            if (target == null)
+            {
+                return;
+            }
+
+            _capturedTarget = target;
+            CurrentTarget = target;
+            FocusChanged?.Invoke(target);
+        }
+
+        /// <summary>Releases a capture. Ignored if something else holds it.</summary>
+        public void ReleaseFocus(IInteractable target)
+        {
+            if (!ReferenceEquals(_capturedTarget, target))
+            {
+                return;
+            }
+
+            _capturedTarget = null;
+            CurrentTarget = null;
+            FocusChanged?.Invoke(null);
         }
 
         private void Update()
@@ -56,7 +93,8 @@ namespace FishingZone.Player
                 return;
             }
 
-            SetTarget(FindTarget());
+            // A capture skips the raycast entirely, so nothing on deck can compete for the key.
+            SetTarget(_capturedTarget ?? FindTarget());
 
             if (CurrentTarget != null && _interactAction.action.WasPressedThisFrame())
             {
