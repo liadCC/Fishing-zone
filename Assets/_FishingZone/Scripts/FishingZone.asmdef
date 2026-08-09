@@ -2,7 +2,9 @@
     "name": "FishingZone",
     "rootNamespace": "FishingZone",
     "references": [
-        "Unity.InputSystem"
+        "Unity.InputSystem",
+        "UnityEngine.UI",
+        "Unity.TextMeshPro"
     ],
     "includePlatforms": [],
     "excludePlatforms": [],
