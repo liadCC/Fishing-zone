@@ -18,6 +18,9 @@ namespace FishingZone.Player
         [SerializeField]
         private CharacterController _characterController;
 
+        [SerializeField]
+        private PlayerPlatformRider _platformRider;
+
         public bool IsOccupyingStation => _currentAnchor != null;
 
         private Transform _currentAnchor;
@@ -34,6 +37,11 @@ namespace FishingZone.Player
             if (_characterController == null)
             {
                 _characterController = GetComponent<CharacterController>();
+            }
+
+            if (_platformRider == null)
+            {
+                _platformRider = GetComponent<PlayerPlatformRider>();
             }
         }
 
@@ -60,6 +68,13 @@ namespace FishingZone.Player
             transform.localPosition = Vector3.zero;
             transform.localRotation = Quaternion.identity;
 
+            // Dropped explicitly rather than left to whichever script order happens to run first:
+            // if the rider kept its reference here it would survive the whole seated period.
+            if (_platformRider != null)
+            {
+                _platformRider.ResetTracking();
+            }
+
             return true;
         }
 
@@ -75,6 +90,15 @@ namespace FishingZone.Player
             // Drop any roll and pitch inherited from a rocking hull; a CharacterController that is
             // not upright behaves badly.
             transform.rotation = Quaternion.Euler(0f, transform.eulerAngles.y, 0f);
+
+            // Reset before walking resumes, so the first frame back can only re-acquire the deck and
+            // return a zero displacement. Without this the first Move of the frame would difference
+            // the new walking position against a reference taken while parented, and on a turning
+            // hull that difference is large enough to throw the player off the map.
+            if (_platformRider != null)
+            {
+                _platformRider.ResetTracking();
+            }
 
             _characterController.enabled = true;
             _movement.enabled = true;
