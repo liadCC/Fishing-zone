@@ -55,9 +55,19 @@ namespace FishingZone.Player
         /// frame fighting each other over collisions.
         ///
         /// This is a displacement, not a velocity. It must not be scaled by delta time.
+        ///
+        /// <paramref name="isAirborne"/> is supplied by the caller rather than derived here, because
+        /// the ground probe cannot tell a standing player from one in the first frames of a jump:
+        /// both are still within probe range of the deck. Only the mover knows its vertical state.
         /// </summary>
-        public Vector3 ConsumePlatformDelta()
+        public Vector3 ConsumePlatformDelta(bool isAirborne)
         {
+            if (isAirborne)
+            {
+                ClearPlatform();
+                return Vector3.zero;
+            }
+
             Transform platform = FindPlatform();
 
             if (platform == null)

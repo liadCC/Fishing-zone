@@ -43,6 +43,7 @@ namespace FishingZone.Player
 
         private CharacterController _controller;
         private float _verticalVelocity;
+        private bool _isGrounded;
         private bool _isConfigured;
 
         private void Awake()
@@ -79,10 +80,15 @@ namespace FishingZone.Player
 
             Vector3 motion = (horizontal * _moveSpeed) + (Vector3.up * _verticalVelocity);
 
+            // isGrounded alone is not enough to mean "on the deck": it still reads true on the frame
+            // a jump is pressed, because it reflects the previous Move. The rising velocity set just
+            // above is what identifies that frame, so the deck is let go of the instant we jump.
+            bool isAirborne = !_isGrounded || _verticalVelocity > 0f;
+
             // Already a displacement rather than a velocity, so it is added after the delta time
             // scaling and folded into the single Move call, which keeps collisions resolved once.
             Vector3 platformDelta = _platformRider != null
-                ? _platformRider.ConsumePlatformDelta()
+                ? _platformRider.ConsumePlatformDelta(isAirborne)
                 : Vector3.zero;
 
             _controller.Move((motion * Time.deltaTime) + platformDelta);
@@ -90,7 +96,9 @@ namespace FishingZone.Player
 
         private void UpdateVerticalVelocity()
         {
+            // Reflects the previous Move, so on the frame a jump is pressed this is still true.
             bool isGrounded = _controller.isGrounded;
+            _isGrounded = isGrounded;
 
             if (isGrounded && _verticalVelocity < 0f)
             {
