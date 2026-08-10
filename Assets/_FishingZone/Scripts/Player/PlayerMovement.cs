@@ -43,7 +43,14 @@ namespace FishingZone.Player
 
         private CharacterController _controller;
         private float _verticalVelocity;
-        private bool _isGrounded;
+
+        /// <summary>
+        /// Latched when a jump begins and held for the whole arc, including while descending back
+        /// within probe range of the deck. Deliberately not derived from isGrounded, which drops for
+        /// a frame at a time on a bobbing hull and would detach a player who never left the deck.
+        /// </summary>
+        private bool _isJumpDetached;
+
         private bool _isConfigured;
 
         private void Awake()
@@ -80,15 +87,12 @@ namespace FishingZone.Player
 
             Vector3 motion = (horizontal * _moveSpeed) + (Vector3.up * _verticalVelocity);
 
-            // isGrounded alone is not enough to mean "on the deck": it still reads true on the frame
-            // a jump is pressed, because it reflects the previous Move. The rising velocity set just
-            // above is what identifies that frame, so the deck is let go of the instant we jump.
-            bool isAirborne = !_isGrounded || _verticalVelocity > 0f;
-
+            // Only a jump detaches. Every other case, including walking off an edge, is left to the
+            // rider's downward probe, which stops finding a platform on its own.
             // Already a displacement rather than a velocity, so it is added after the delta time
             // scaling and folded into the single Move call, which keeps collisions resolved once.
             Vector3 platformDelta = _platformRider != null
-                ? _platformRider.ConsumePlatformDelta(isAirborne)
+                ? _platformRider.ConsumePlatformDelta(_isJumpDetached)
                 : Vector3.zero;
 
             _controller.Move((motion * Time.deltaTime) + platformDelta);
@@ -98,17 +102,24 @@ namespace FishingZone.Player
         {
             // Reflects the previous Move, so on the frame a jump is pressed this is still true.
             bool isGrounded = _controller.isGrounded;
-            _isGrounded = isGrounded;
 
             if (isGrounded && _verticalVelocity < 0f)
             {
                 _verticalVelocity = _groundedStickVelocity;
+
+                // Grounded while descending is the only thing that counts as a landing, so an arc
+                // cannot be ended early by brushing the deck on the way past.
+                _isJumpDetached = false;
             }
 
             if (isGrounded && _jumpAction.action.WasPressedThisFrame())
             {
                 // Velocity needed to reach _jumpHeight. Abs keeps this valid if gravity is mis-signed.
                 _verticalVelocity = Mathf.Sqrt(_jumpHeight * 2f * Mathf.Abs(_gravity));
+
+                // Set after the landing check above, so the jump frame ends detached rather than
+                // being cleared by the grounded state it still reports.
+                _isJumpDetached = true;
             }
 
             _verticalVelocity += _gravity * Time.deltaTime;

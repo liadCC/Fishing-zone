@@ -56,13 +56,15 @@ namespace FishingZone.Player
         ///
         /// This is a displacement, not a velocity. It must not be scaled by delta time.
         ///
-        /// <paramref name="isAirborne"/> is supplied by the caller rather than derived here, because
+        /// <paramref name="isDetached"/> is supplied by the caller rather than derived here, because
         /// the ground probe cannot tell a standing player from one in the first frames of a jump:
-        /// both are still within probe range of the deck. Only the mover knows its vertical state.
+        /// both are still within probe range of the deck. Only the mover knows it has jumped.
+        /// Every other way of leaving the deck needs no flag, because the probe simply stops finding
+        /// a platform.
         /// </summary>
-        public Vector3 ConsumePlatformDelta(bool isAirborne)
+        public Vector3 ConsumePlatformDelta(bool isDetached)
         {
-            if (isAirborne)
+            if (isDetached)
             {
                 ClearPlatform();
                 return Vector3.zero;
