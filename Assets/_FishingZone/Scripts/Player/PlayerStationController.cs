@@ -171,25 +171,36 @@ namespace FishingZone.Player
             float halfHeight = _characterController.height * 0.5f;
             float radius = _characterController.radius;
 
-            // Distance from the transform origin down to the base of the capsule, honouring a
-            // non-zero centre rather than assuming the origin sits mid-capsule.
-            float originToBase = halfHeight - _characterController.center.y;
+            // Distance from the transform origin down to the centre of the capsule's bottom
+            // hemisphere, honouring a non-zero centre rather than assuming the origin sits
+            // mid-capsule. Clamped because a capsule shorter than its own diameter is just a sphere.
+            float originToBottomSphere = Mathf.Max(halfHeight - radius, 0f) - _characterController.center.y;
 
             Vector3 capsuleCentre = transform.TransformPoint(_characterController.center);
             float lift = _characterController.height + radius;
             Vector3 castOrigin = capsuleCentre + (Vector3.up * lift);
 
-            // A sphere rather than a ray, so the result is a surface the capsule's width can rest on
-            // rather than a point that might sit on an edge.
+            // A sphere rather than a ray, because the capsule's base is a hemisphere: on a rolled
+            // deck a point test would sit the capsule too low by radius * (1/cos(roll) - 1).
             if (!Physics.SphereCast(castOrigin, radius, Vector3.down, out RaycastHit hit, lift * 2f,
                     _platformRider.PlatformLayers, QueryTriggerInteraction.Ignore))
             {
                 return false;
             }
 
-            // Only the height is taken from the hit; the seat already decided where on the deck the
-            // player stands, and skin width keeps the capsule just clear of the surface.
-            standingPosition.y = hit.point.y + originToBase + _characterController.skinWidth;
+            // A zero distance means the sweep began already touching something, which makes the
+            // contact data meaningless. Treated as a miss so the caller releases in place.
+            if (hit.distance <= 0f)
+            {
+                return false;
+            }
+
+            // Derived from the swept sphere's resting centre rather than from hit.point. On a rolled
+            // deck the contact point lies off to the up-slope side by -normal * radius, so its height
+            // belongs to a different X/Z than the player's and cannot be combined with theirs. The
+            // swept centre, by contrast, is always on the vertical line the cast travelled.
+            float restingSphereCentreY = castOrigin.y - hit.distance;
+            standingPosition.y = restingSphereCentreY + originToBottomSphere + _characterController.skinWidth;
             return true;
         }
     }
