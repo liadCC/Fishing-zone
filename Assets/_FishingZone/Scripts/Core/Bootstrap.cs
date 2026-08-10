@@ -1,4 +1,5 @@
 using FishingZone.Core.Input;
+using FishingZone.Networking;
 using UnityEngine;
 
 namespace FishingZone.Core
@@ -15,6 +16,13 @@ namespace FishingZone.Core
 
         [SerializeField]
         private GameInput _gameInput;
+
+        /// <summary>
+        /// Optional on purpose. Without it the game still boots and plays locally, it simply never
+        /// opens a session, which keeps a missing reference from bricking startup entirely.
+        /// </summary>
+        [SerializeField]
+        private SessionManager _sessionManager;
 
         /// <summary>Guards against a second Bootstrap scene load creating a duplicate set of services.</summary>
         private static bool _hasInitialized;
@@ -54,6 +62,11 @@ namespace FishingZone.Core
             ServiceRegistry.Register(_gameFlow);
             ServiceRegistry.Register(_gameInput);
 
+            if (_sessionManager != null)
+            {
+                ServiceRegistry.Register(_sessionManager);
+            }
+
             GameLog.Info(LogCategory.Boot, "Persistent services initialized.");
         }
 
@@ -66,6 +79,16 @@ namespace FishingZone.Core
 
             // The menu is driven by UI input only; other maps stay off until a scene asks for them.
             _gameInput.EnableMap(InputMap.UI);
+
+            // Opened before the first transition, and sequenced here rather than left to the
+            // session manager's own Start, because the order between two Start methods is undefined
+            // and this decides whether that first load takes the host-authoritative path.
+            // Solo play is a host of one, so there is no second, offline code path to maintain.
+            if (_sessionManager != null)
+            {
+                _sessionManager.StartHost();
+            }
+
             _gameFlow.GoTo(GameState.MainMenu);
         }
 
@@ -78,6 +101,7 @@ namespace FishingZone.Core
 
             ServiceRegistry.Unregister<GameFlowManager>();
             ServiceRegistry.Unregister<GameInput>();
+            ServiceRegistry.Unregister<SessionManager>();
             _hasInitialized = false;
         }
     }
