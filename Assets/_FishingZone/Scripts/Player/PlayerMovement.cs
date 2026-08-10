@@ -37,6 +37,10 @@ namespace FishingZone.Player
         [SerializeField]
         private float _groundedStickVelocity = -2f;
 
+        /// <summary>Optional. When absent the player simply does not inherit platform motion.</summary>
+        [SerializeField]
+        private PlayerPlatformRider _platformRider;
+
         private CharacterController _controller;
         private float _verticalVelocity;
         private bool _isConfigured;
@@ -44,6 +48,11 @@ namespace FishingZone.Player
         private void Awake()
         {
             _controller = GetComponent<CharacterController>();
+
+            if (_platformRider == null)
+            {
+                _platformRider = GetComponent<PlayerPlatformRider>();
+            }
 
             _isConfigured = _moveAction != null && _jumpAction != null;
             if (!_isConfigured)
@@ -61,8 +70,6 @@ namespace FishingZone.Player
 
             UpdateVerticalVelocity();
 
-            // Milestone 2 note: standing on the moving boat will need the platform's delta added
-            // here, because a CharacterController does not inherit motion from what it stands on.
             Vector2 input = _moveAction.action.ReadValue<Vector2>();
             Vector3 horizontal = (transform.right * input.x) + (transform.forward * input.y);
             if (horizontal.sqrMagnitude > 1f)
@@ -71,7 +78,14 @@ namespace FishingZone.Player
             }
 
             Vector3 motion = (horizontal * _moveSpeed) + (Vector3.up * _verticalVelocity);
-            _controller.Move(motion * Time.deltaTime);
+
+            // Already a displacement rather than a velocity, so it is added after the delta time
+            // scaling and folded into the single Move call, which keeps collisions resolved once.
+            Vector3 platformDelta = _platformRider != null
+                ? _platformRider.ConsumePlatformDelta()
+                : Vector3.zero;
+
+            _controller.Move((motion * Time.deltaTime) + platformDelta);
         }
 
         private void UpdateVerticalVelocity()
