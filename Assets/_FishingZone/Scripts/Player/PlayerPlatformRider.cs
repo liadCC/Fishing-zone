@@ -1,3 +1,4 @@
+using FishingZone.Core;
 using UnityEngine;
 
 namespace FishingZone.Player
@@ -36,6 +37,20 @@ namespace FishingZone.Player
         /// </summary>
         [SerializeField]
         private float _groundProbeDistance = 0.35f;
+
+        /// <summary>
+        /// Diagnostics for tracking down why a deck reference is lost. Off by default; it reports on
+        /// change rather than every frame, plus a slow heartbeat, so the console stays readable.
+        /// Only ever emitted by the local player, since this component is disabled on remote copies.
+        /// </summary>
+        [SerializeField]
+        private bool _logDiagnostics;
+
+        [SerializeField]
+        private float _diagnosticHeartbeatSeconds = 2f;
+
+        private float _nextHeartbeatTime;
+        private int _clearsSinceLastReport;
 
         public Transform CurrentPlatform { get; private set; }
 
@@ -84,6 +99,9 @@ namespace FishingZone.Player
         {
             if (!CanRide())
             {
+                ReportClear(_characterController == null || !_characterController.enabled
+                    ? "CharacterController disabled (seated at a station?)"
+                    : "detached by a jump");
                 ClearPlatform();
                 return;
             }
@@ -91,6 +109,7 @@ namespace FishingZone.Player
             Transform platform = FindPlatform();
             if (platform == null)
             {
+                ReportClear("downward probe found nothing on the platform layers");
                 ClearPlatform();
                 return;
             }
@@ -103,6 +122,7 @@ namespace FishingZone.Player
             {
                 CurrentPlatform = platform;
                 StorePose(platform, currentPose);
+                ReportAcquired(platform);
                 return;
             }
 
@@ -127,6 +147,72 @@ namespace FishingZone.Player
             }
 
             StorePose(platform, currentPose);
+            ReportHeartbeat(platform, delta);
+        }
+
+        private void ReportAcquired(Transform platform)
+        {
+            if (!_logDiagnostics)
+            {
+                return;
+            }
+
+            Rigidbody body = platform.GetComponent<Rigidbody>();
+            GameLog.Info(LogCategory.Network,
+                $"RIDER acquired '{platform.name}' " +
+                $"| layer '{LayerMask.LayerToName(platform.gameObject.layer)}' " +
+                $"| rigidbody {(body == null ? "NONE" : body.name + (body.isKinematic ? " (kinematic)" : " (dynamic)"))} " +
+                $"| platformY {platform.position.y:F3} playerY {transform.position.y:F3} " +
+                $"| clears since last acquire: {_clearsSinceLastReport}");
+
+            _clearsSinceLastReport = 0;
+        }
+
+        private void ReportClear(string reason)
+        {
+            if (!_hasSample)
+            {
+                // Already cleared; only the first frame of a loss is interesting.
+                return;
+            }
+
+            _clearsSinceLastReport++;
+
+            if (!_logDiagnostics)
+            {
+                return;
+            }
+
+            Vector3 origin = _characterController != null
+                ? transform.TransformPoint(_characterController.center)
+                : transform.position;
+            float distance = _characterController != null
+                ? (_characterController.height * 0.5f) + _groundProbeDistance
+                : 0f;
+
+            GameLog.Warn(LogCategory.Network,
+                $"RIDER lost the deck: {reason} " +
+                $"| probe from {origin} down {distance:F3} " +
+                $"| mask {_platformLayers.value} " +
+                $"| playerPos {transform.position} " +
+                $"| grounded {(_characterController != null && _characterController.enabled && _characterController.isGrounded)}");
+        }
+
+        private void ReportHeartbeat(Transform platform, Vector3 delta)
+        {
+            if (!_logDiagnostics || Time.unscaledTime < _nextHeartbeatTime)
+            {
+                return;
+            }
+
+            _nextHeartbeatTime = Time.unscaledTime + Mathf.Max(_diagnosticHeartbeatSeconds, 0.25f);
+
+            GameLog.Info(LogCategory.Network,
+                $"RIDER riding '{platform.name}' " +
+                $"| carried delta {delta.magnitude:F4} " +
+                $"| platformPos {platform.position} " +
+                $"| playerPos {transform.position} " +
+                $"| player above deck {(transform.position.y - platform.position.y):F3}");
         }
 
         /// <summary>
