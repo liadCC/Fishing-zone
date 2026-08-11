@@ -6,18 +6,26 @@ namespace FishingZone.Player
     /// Lets a walking player inherit the motion of the surface under their feet, because a
     /// CharacterController is moved in world space and knows nothing about what it stands on.
     ///
-    /// Rather than tracking the platform's velocity, it remembers where the player stood in the
-    /// platform's own local space and asks each frame where that spot has moved to. That handles
-    /// translation, turning and the roll of a bobbing hull in one step, and it stays correct even
-    /// when the platform is driven by physics at a different rate from the player.
+    /// It tracks the platform's own pose from frame to frame and re-applies that rigid motion to
+    /// wherever the player currently is. Storing the player's position in platform space instead
+    /// would only be correct if the measurement always happened before the player's own walking,
+    /// which ties the result to script execution order; this does not.
     ///
-    /// The player is never parented here. Parenting is only used while seated at a station, which
-    /// is a separate path that does not run through this component.
+    /// Everything runs in LateUpdate, after physics has moved a locally simulated hull and after a
+    /// replicated one has been interpolated. Measuring earlier meant that on a client, where the
+    /// boat is driven by a network transform during Update, the pose had not advanced since the last
+    /// reference was taken and the inherited motion came out as zero every frame.
+    ///
+    /// The player is never parented. Seating at a station is a separate path that holds the player
+    /// on the anchor directly, and it does not run through this component.
     /// </summary>
     public class PlayerPlatformRider : MonoBehaviour
     {
         [SerializeField]
         private CharacterController _characterController;
+
+        [SerializeField]
+        private PlayerMovement _movement;
 
         [SerializeField]
         private LayerMask _platformLayers;
@@ -37,7 +45,7 @@ namespace FishingZone.Player
         /// </summary>
         public LayerMask PlatformLayers => _platformLayers;
 
-        private Vector3 _localStandPoint;
+        private Matrix4x4 _lastPlatformPose;
         private float _lastPlatformYaw;
         private bool _hasSample;
 
@@ -47,6 +55,11 @@ namespace FishingZone.Player
             {
                 _characterController = GetComponent<CharacterController>();
             }
+
+            if (_movement == null)
+            {
+                _movement = GetComponent<PlayerMovement>();
+            }
         }
 
         private void OnDisable()
@@ -55,11 +68,11 @@ namespace FishingZone.Player
         }
 
         /// <summary>
-        /// Forgets the current platform, so the next <see cref="ConsumePlatformDelta"/> can only
-        /// re-establish a reference and return zero.
+        /// Forgets the current platform, so the next frame can only re-establish a reference and
+        /// inherit nothing.
         ///
         /// Stations call this on both sitting down and standing up. While seated the transform is
-        /// driven by parenting rather than by walking, so any reference taken during that time
+        /// driven by the seat rather than by walking, so any reference taken during that time
         /// describes a different regime and must never be differenced against a walking position.
         /// </summary>
         public void ResetTracking()
@@ -67,47 +80,37 @@ namespace FishingZone.Player
             ClearPlatform();
         }
 
-        /// <summary>
-        /// Returns the world-space displacement the player should inherit this frame, and applies the
-        /// platform's turn to their facing. Called by PlayerMovement so the result lands in the same
-        /// Move call as the player's own motion: applying it separately would mean two Move calls per
-        /// frame fighting each other over collisions.
-        ///
-        /// This is a displacement, not a velocity. It must not be scaled by delta time.
-        ///
-        /// <paramref name="isDetached"/> is supplied by the caller rather than derived here, because
-        /// the ground probe cannot tell a standing player from one in the first frames of a jump:
-        /// both are still within probe range of the deck. Only the mover knows it has jumped.
-        /// Every other way of leaving the deck needs no flag, because the probe simply stops finding
-        /// a platform.
-        /// </summary>
-        public Vector3 ConsumePlatformDelta(bool isDetached)
+        private void LateUpdate()
         {
-            if (isDetached)
+            if (!CanRide())
             {
                 ClearPlatform();
-                return Vector3.zero;
+                return;
             }
 
             Transform platform = FindPlatform();
-
             if (platform == null)
             {
                 ClearPlatform();
-                return Vector3.zero;
+                return;
             }
 
+            Matrix4x4 currentPose = Matrix4x4.TRS(platform.position, platform.rotation, Vector3.one);
+
             // Stepping onto a platform, or back onto one after a jump, only establishes a reference.
-            // Returning zero here is what stops the player being snapped by the gap they were airborne for.
+            // Inheriting nothing here is what stops the player being snapped by the gap they missed.
             if (platform != CurrentPlatform || !_hasSample)
             {
                 CurrentPlatform = platform;
-                SamplePlatform();
-                return Vector3.zero;
+                StorePose(platform, currentPose);
+                return;
             }
 
-            Vector3 targetPosition = platform.TransformPoint(_localStandPoint);
-            Vector3 delta = targetPosition - transform.position;
+            // Where the player would be now if they had been rigidly attached to the hull since the
+            // last frame. Taken from their live position, so their own walking is preserved rather
+            // than being cancelled out.
+            Vector3 carried = currentPose.MultiplyPoint3x4(_lastPlatformPose.inverse.MultiplyPoint3x4(transform.position));
+            Vector3 delta = carried - transform.position;
 
             // Yaw only. Rolling with a pitching deck would tip the CharacterController over, and yaw
             // composes additively with the look component so the two never fight.
@@ -117,35 +120,33 @@ namespace FishingZone.Player
                 transform.Rotate(0f, yawDelta, 0f, Space.World);
             }
 
-            return delta;
+            if (delta.sqrMagnitude > 0f)
+            {
+                // A displacement, not a velocity: it must not be scaled by delta time.
+                _characterController.Move(delta);
+            }
+
+            StorePose(platform, currentPose);
         }
 
         /// <summary>
-        /// Re-sampled after every Update has run, so the reference point reflects where the player
-        /// ended up once their own movement was applied. Sampling earlier would feed their walking
-        /// back in as platform motion.
+        /// A disabled controller means something other than walking is driving the transform,
+        /// currently a station seat. Jumping is reported by the mover, because the ground probe
+        /// cannot tell a standing player from one in the first frames of a jump: both are still
+        /// within range of the deck.
         /// </summary>
-        private void LateUpdate()
+        private bool CanRide()
         {
-            // A disabled controller means the transform is being moved by something other than
-            // walking, currently station parenting. Sampling then would record a reference that the
-            // first walking frame would difference against, producing a displacement that never
-            // corresponded to any real movement.
-            if (CurrentPlatform == null || _characterController == null || !_characterController.enabled)
+            if (_characterController == null || !_characterController.enabled)
             {
-                return;
+                return false;
             }
 
-            SamplePlatform();
+            return _movement == null || !_movement.IsPlatformDetached;
         }
 
         private Transform FindPlatform()
         {
-            if (_characterController == null || !_characterController.enabled)
-            {
-                return null;
-            }
-
             Vector3 origin = transform.TransformPoint(_characterController.center);
             float distance = (_characterController.height * 0.5f) + _groundProbeDistance;
 
@@ -159,10 +160,10 @@ namespace FishingZone.Player
             return hit.rigidbody != null ? hit.rigidbody.transform : hit.collider.transform;
         }
 
-        private void SamplePlatform()
+        private void StorePose(Transform platform, Matrix4x4 pose)
         {
-            _localStandPoint = CurrentPlatform.InverseTransformPoint(transform.position);
-            _lastPlatformYaw = CurrentPlatform.eulerAngles.y;
+            _lastPlatformPose = pose;
+            _lastPlatformYaw = platform.eulerAngles.y;
             _hasSample = true;
         }
 
