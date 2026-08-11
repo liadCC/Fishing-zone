@@ -231,12 +231,37 @@ namespace FishingZone.Player
             return _movement == null || !_movement.IsPlatformDetached;
         }
 
+        /// <summary>
+        /// Sweeps the capsule's own footprint downwards rather than casting a line from its centre.
+        ///
+        /// A centre ray disagrees with CharacterController.isGrounded whenever contact is anywhere
+        /// but directly underneath: near a deck edge, on a rolling or pitching hull, or across a
+        /// seam. The controller stayed grounded while the ray found nothing, the deck reference was
+        /// dropped, and the boat sailed away from a player who was still standing on it. Matching
+        /// the shape the controller actually stands on removes that whole class of disagreement.
+        /// </summary>
         private Transform FindPlatform()
         {
-            Vector3 origin = transform.TransformPoint(_characterController.center);
-            float distance = (_characterController.height * 0.5f) + _groundProbeDistance;
+            float radius = _characterController.radius;
 
-            if (!Physics.Raycast(origin, Vector3.down, out RaycastHit hit, distance, _platformLayers))
+            // Centre of the capsule's bottom hemisphere: the part that rests on the deck.
+            float bottomOffset = Mathf.Max((_characterController.height * 0.5f) - radius, 0f);
+            Vector3 bottomSphere = transform.TransformPoint(_characterController.center) + (Vector3.down * bottomOffset);
+
+            // Inset slightly so the sweep reports the surface underfoot rather than snagging a
+            // railing or bulkhead the controller is merely brushing against.
+            float sweepRadius = Mathf.Max(radius - _characterController.skinWidth, 0.01f);
+
+            // Started above the resting point, because a sweep that begins already touching returns
+            // nothing, and the hull can be pressed a little into the capsule as it rocks.
+            Vector3 origin = bottomSphere + (Vector3.up * radius);
+
+            // Sized so the sweep still finishes exactly the probe distance below the feet despite
+            // starting above them, which keeps the tuning value meaning what its name says.
+            float distance = (2f * radius) - sweepRadius + _groundProbeDistance + _characterController.skinWidth;
+
+            if (!Physics.SphereCast(origin, sweepRadius, Vector3.down, out RaycastHit hit, distance,
+                    _platformLayers, QueryTriggerInteraction.Ignore))
             {
                 return null;
             }
