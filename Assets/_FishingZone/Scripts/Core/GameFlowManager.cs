@@ -31,6 +31,9 @@ namespace FishingZone.Core
         private static bool IsSessionActive =>
             NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening;
 
+        /// <summary>Grace period for a followed scene to become active before it is called a failure.</summary>
+        private const float FollowActivationTimeout = 5f;
+
         private bool _isSceneEventHooked;
 
         /// <summary>
@@ -245,6 +248,42 @@ namespace FishingZone.Core
             if (!TryGetStateForScene(sceneName, out GameState state) || state == CurrentState)
             {
                 return;
+            }
+
+            StartCoroutine(FollowHostRoutine(state, sceneName));
+        }
+
+        /// <summary>
+        /// Adopts the host's scene, but only once this client is genuinely in it.
+        ///
+        /// The scene event names a scene; it is not proof that the scene became the active one. A
+        /// scene that finished loading without being activated leaves the previous one on screen,
+        /// and reporting the state from the event alone turned that into a silent lie: the log said
+        /// the crew had moved while the player was still standing in the old level.
+        /// </summary>
+        private IEnumerator FollowHostRoutine(GameState state, string sceneName)
+        {
+            Scene loaded = SceneManager.GetSceneByName(sceneName);
+            if (loaded.IsValid() && loaded.isLoaded && SceneManager.GetActiveScene() != loaded)
+            {
+                // Loaded but never activated, which is the case that produced the mismatch.
+                SceneManager.SetActiveScene(loaded);
+            }
+
+            // A short grace period, because activation can land a frame or two after the event.
+            float remaining = FollowActivationTimeout;
+            while (SceneManager.GetActiveScene().name != sceneName && remaining > 0f)
+            {
+                remaining -= Time.unscaledDeltaTime;
+                yield return null;
+            }
+
+            if (SceneManager.GetActiveScene().name != sceneName)
+            {
+                GameLog.Error(LogCategory.Flow,
+                    $"Netcode reported '{sceneName}' loaded, but the active scene is still '{SceneManager.GetActiveScene().name}'. " +
+                    $"State stays {CurrentState}. Check that '{sceneName}' is in the build list on this client.");
+                yield break;
             }
 
             CurrentState = state;
