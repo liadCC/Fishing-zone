@@ -1,3 +1,4 @@
+using System.Collections;
 using FishingZone.Core;
 using Unity.Netcode;
 using UnityEngine;
@@ -17,6 +18,9 @@ namespace FishingZone.Networking
     public class SessionManager : MonoBehaviour
     {
         public bool IsSessionActive => NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening;
+
+        /// <summary>Set while trading a host session for a client one, so the swap cannot overlap itself.</summary>
+        private bool _isSwitchingSession;
 
         /// <summary>Starts hosting. Solo play uses this too; the crew simply has one member.</summary>
         public bool StartHost()
@@ -65,6 +69,67 @@ namespace FishingZone.Networking
             }
 
             return true;
+        }
+
+        /// <summary>
+        /// Leaves whatever session this instance is running and connects to someone else's.
+        ///
+        /// Needed because every instance opens a host of one at boot, so joining is not "start a
+        /// client" but "give up being a host first". Netcode's shutdown does not complete within the
+        /// call, so a new session cannot simply be opened on the next line.
+        ///
+        /// Deliberately does not change scene: the host owns shared transitions, and this client
+        /// will be led wherever the crew already is.
+        /// </summary>
+        public void JoinAsClient()
+        {
+            if (!TryGetNetworkManager(out NetworkManager networkManager))
+            {
+                return;
+            }
+
+            if (_isSwitchingSession)
+            {
+                GameLog.Warn(LogCategory.Network, "Ignored Join: already switching session.");
+                return;
+            }
+
+            if (networkManager.IsClient && !networkManager.IsHost)
+            {
+                GameLog.Warn(LogCategory.Network, "Ignored Join: already connected to a crew.");
+                return;
+            }
+
+            StartCoroutine(JoinAsClientRoutine());
+        }
+
+        private IEnumerator JoinAsClientRoutine()
+        {
+            _isSwitchingSession = true;
+
+            NetworkManager networkManager = NetworkManager.Singleton;
+
+            if (networkManager.IsListening)
+            {
+                GameLog.Info(LogCategory.Network, "Leaving the local session to join a crew.");
+                networkManager.Shutdown();
+            }
+
+            // Shutdown finishes over the following frames. Opening a client before it completes
+            // leaves the transport half torn down and the connection silently fails.
+            while (networkManager != null && (networkManager.ShutdownInProgress || networkManager.IsListening))
+            {
+                yield return null;
+            }
+
+            _isSwitchingSession = false;
+
+            if (networkManager == null)
+            {
+                yield break;
+            }
+
+            StartClient();
         }
 
         public void Shutdown()
