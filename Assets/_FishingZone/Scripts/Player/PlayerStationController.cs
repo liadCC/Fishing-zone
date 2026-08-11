@@ -25,7 +25,7 @@ namespace FishingZone.Player
         public bool IsOccupyingStation => _currentAnchor != null;
 
         private Transform _currentAnchor;
-        private Transform _originalParent;
+        private float _lastAnchorYaw;
 
         private void Awake()
         {
@@ -47,8 +47,13 @@ namespace FishingZone.Player
         }
 
         /// <summary>
-        /// Snaps to the anchor and parents to it, so the player rides the boat with no platform
-        /// maths at all while seated. Returns false if already at a station.
+        /// Seats the player at the anchor and holds them there for as long as they occupy it.
+        ///
+        /// The player is deliberately NOT re-parented under the boat. A NetworkObject may only be
+        /// parented to another NetworkObject, and Netcode reverts anything else, so parenting a
+        /// player under a plain anchor object silently undoes itself the moment the hull becomes a
+        /// networked object and the boat then sails out from under them. Following the anchor gives
+        /// the same result without depending on parenting at all.
         /// </summary>
         public bool TryOccupy(Transform anchor)
         {
@@ -58,16 +63,15 @@ namespace FishingZone.Player
             }
 
             _currentAnchor = anchor;
-            _originalParent = transform.parent;
 
             // The controller must be switched off before the transform is moved, otherwise it
             // fights the assignment and the player is left jittering at the seat.
             _characterController.enabled = false;
             _movement.enabled = false;
 
-            transform.SetParent(anchor, false);
-            transform.localPosition = Vector3.zero;
-            transform.localRotation = Quaternion.identity;
+            transform.position = anchor.position;
+            FaceAnchorHeading(anchor);
+            _lastAnchorYaw = anchor.eulerAngles.y;
 
             // Dropped explicitly rather than left to whichever script order happens to run first:
             // if the rider kept its reference here it would survive the whole seated period.
@@ -79,6 +83,41 @@ namespace FishingZone.Player
             return true;
         }
 
+        /// <summary>
+        /// Holds the seated player on the anchor and turns them with it.
+        ///
+        /// Runs after every Update so it sees the hull's final pose for the frame, whether that came
+        /// from local physics on the server or from the replicated transform on a client. Yaw is
+        /// applied as a delta so the look component's own turning survives, and position is assigned
+        /// outright so nothing can accumulate drift.
+        /// </summary>
+        private void LateUpdate()
+        {
+            if (!IsOccupyingStation)
+            {
+                return;
+            }
+
+            float anchorYaw = _currentAnchor.eulerAngles.y;
+            float yawDelta = Mathf.DeltaAngle(_lastAnchorYaw, anchorYaw);
+            if (!Mathf.Approximately(yawDelta, 0f))
+            {
+                transform.Rotate(0f, yawDelta, 0f, Space.World);
+            }
+
+            _lastAnchorYaw = anchorYaw;
+            transform.position = _currentAnchor.position;
+        }
+
+        private void FaceAnchorHeading(Transform anchor)
+        {
+            Vector3 heading = Vector3.ProjectOnPlane(anchor.forward, Vector3.up);
+            if (heading.sqrMagnitude > 0.0001f)
+            {
+                transform.rotation = Quaternion.LookRotation(heading, Vector3.up);
+            }
+        }
+
         public void Release()
         {
             if (!IsOccupyingStation)
@@ -86,7 +125,8 @@ namespace FishingZone.Player
                 return;
             }
 
-            transform.SetParent(_originalParent, true);
+            // Nothing to unparent: seating held the player by following the anchor, not by
+            // re-parenting them under it.
 
             // Uprighted before the deck is measured, so the capsule's offsets are purely vertical
             // and the cast below is measuring the same shape that will exist afterwards.
@@ -118,7 +158,6 @@ namespace FishingZone.Player
             _movement.enabled = true;
 
             _currentAnchor = null;
-            _originalParent = null;
         }
 
         /// <summary>
