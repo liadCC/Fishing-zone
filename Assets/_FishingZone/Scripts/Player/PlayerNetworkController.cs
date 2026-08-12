@@ -25,9 +25,33 @@ namespace FishingZone.Player
         [SerializeField]
         private GameObject[] _ownerOnlyObjects;
 
+        /// <summary>
+        /// Handled explicitly rather than left to the list above, because forgetting it is not a
+        /// cosmetic mistake: a remote copy is driven entirely by replication and never needs to
+        /// collide with anything, but its capsule still overlaps whatever its owner is standing in.
+        /// A player seated at the wheel sits partly inside the hull, and on the server that hull is
+        /// a dynamic body, so an enabled remote controller pushes the boat around and destabilises
+        /// it for the whole crew.
+        /// </summary>
+        [SerializeField]
+        private CharacterController _characterController;
+
+        private void Awake()
+        {
+            if (_characterController == null)
+            {
+                _characterController = GetComponent<CharacterController>();
+            }
+        }
+
         public override void OnNetworkSpawn()
         {
             bool isOwner = IsOwner;
+
+            if (_characterController != null)
+            {
+                _characterController.enabled = isOwner;
+            }
 
             if (_ownerOnlyBehaviours != null)
             {
