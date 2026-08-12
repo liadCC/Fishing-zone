@@ -1,6 +1,5 @@
 using FishingZone.Core;
 using UnityEngine;
-using UnityEngine.InputSystem;
 
 namespace FishingZone.Boat
 {
@@ -18,15 +17,6 @@ namespace FishingZone.Boat
     [RequireComponent(typeof(Rigidbody))]
     public class BoatMovement : MonoBehaviour
     {
-        [SerializeField]
-        private InputActionReference _throttleAction;
-
-        [SerializeField]
-        private InputActionReference _steerAction;
-
-        [SerializeField]
-        private InputActionReference _brakeAction;
-
         [SerializeField]
         private float _acceleration = 8f;
 
@@ -57,17 +47,13 @@ namespace FishingZone.Boat
         public bool IsControlled { get; private set; }
 
         private Rigidbody _rigidbody;
-        private bool _isConfigured;
+        private float _throttleInput;
+        private float _steerInput;
+        private bool _isBrakingInput;
 
         private void Awake()
         {
             _rigidbody = GetComponent<Rigidbody>();
-
-            _isConfigured = _throttleAction != null && _steerAction != null && _brakeAction != null;
-            if (!_isConfigured)
-            {
-                GameLog.Error(LogCategory.Input, "BoatMovement is missing a Throttle, Steer or Brake action reference. Assign all three in the Inspector.");
-            }
         }
 
         /// <summary>
@@ -76,7 +62,26 @@ namespace FishingZone.Boat
         /// </summary>
         public void SetControlEnabled(bool isControlled)
         {
-            IsControlled = isControlled && _isConfigured;
+            IsControlled = isControlled;
+
+            if (!isControlled)
+            {
+                // Cleared so a released wheel cannot keep applying whatever was last held down,
+                // including when the driver vanished mid-turn by disconnecting.
+                SetInput(0f, 0f, false);
+            }
+        }
+
+        /// <summary>
+        /// Supplies the driver's intent. Reading the actions here would tie the hull to whichever
+        /// machine happened to have the keyboard; instead whoever holds the wheel sends what they
+        /// want, and only the server turns that into force.
+        /// </summary>
+        public void SetInput(float throttle, float steer, bool isBraking)
+        {
+            _throttleInput = Mathf.Clamp(throttle, -1f, 1f);
+            _steerInput = Mathf.Clamp(steer, -1f, 1f);
+            _isBrakingInput = isBraking;
         }
 
         private void FixedUpdate()
@@ -88,14 +93,10 @@ namespace FishingZone.Boat
                 return;
             }
 
-            float throttle = _throttleAction.action.ReadValue<float>();
-            float steer = _steerAction.action.ReadValue<float>();
-            bool isBraking = _brakeAction.action.IsPressed();
+            ApplyThrottle(_throttleInput);
+            ApplySteering(_steerInput);
 
-            ApplyThrottle(throttle);
-            ApplySteering(steer);
-
-            if (isBraking)
+            if (_isBrakingInput)
             {
                 ApplyBrake();
             }
