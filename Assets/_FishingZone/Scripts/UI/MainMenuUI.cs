@@ -35,8 +35,9 @@ namespace FishingZone.UI
         {
             SessionManager session = ServiceRegistry.Get<SessionManager>();
 
-            // Normally already hosting from boot. This only covers a failed or shut down session,
-            // so that the button still works rather than moving to a lobby with nothing behind it.
+            // This is where the crew actually opens. Nothing hosts at boot, because a copy that
+            // claims the transport port on startup stops any second copy on the same machine from
+            // hosting at all. Guarded rather than unconditional so pressing it twice is harmless.
             if (session != null && !session.IsSessionActive)
             {
                 session.StartHost();

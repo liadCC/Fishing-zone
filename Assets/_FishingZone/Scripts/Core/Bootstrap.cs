@@ -80,15 +80,13 @@ namespace FishingZone.Core
             // The menu is driven by UI input only; other maps stay off until a scene asks for them.
             _gameInput.EnableMap(InputMap.UI);
 
-            // Opened before the first transition, and sequenced here rather than left to the
-            // session manager's own Start, because the order between two Start methods is undefined
-            // and this decides whether that first load takes the host-authoritative path.
-            // Solo play is a host of one, so there is no second, offline code path to maintain.
-            if (_sessionManager != null)
-            {
-                _sessionManager.StartHost();
-            }
-
+            // No session is opened here. Hosting at boot meant every copy of the game claimed the
+            // transport's port the moment it started, so a second instance on the same machine
+            // could not bind and whichever launched last was left unable to host at all.
+            //
+            // The crew is opened by Create Crew instead, which is the first thing a player does and
+            // is still not a NetworkManager button. Solo play remains a host of one; it simply
+            // becomes one a moment later, and there is still no separate offline path.
             _gameFlow.GoTo(GameState.MainMenu);
         }
 
