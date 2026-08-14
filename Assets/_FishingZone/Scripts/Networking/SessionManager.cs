@@ -17,7 +17,64 @@ namespace FishingZone.Networking
     /// </summary>
     public class SessionManager : MonoBehaviour
     {
+        /// <summary>
+        /// Crew size the design locks at one to four. Enforced here rather than through connection
+        /// approval so that nothing about the NetworkManager's configuration has to change: a
+        /// mis-set approval flag refuses every connection, which is a far worse failure than a
+        /// fifth player being turned away a moment late.
+        /// </summary>
+        [SerializeField]
+        private int _maxCrewSize = 4;
+
         public bool IsSessionActive => NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening;
+
+        /// <summary>
+        /// Subscribed in Start because NetworkManager assigns its singleton in Awake, and every
+        /// Awake runs before any Start. This lives on the persistent services object, so it is the
+        /// only place that can police the crew in every scene; the roster exists only in the lobby.
+        /// </summary>
+        private void Start()
+        {
+            if (NetworkManager.Singleton != null)
+            {
+                NetworkManager.Singleton.OnClientConnectedCallback += EnforceCrewSize;
+            }
+        }
+
+        private void OnDestroy()
+        {
+            if (NetworkManager.Singleton != null)
+            {
+                NetworkManager.Singleton.OnClientConnectedCallback -= EnforceCrewSize;
+            }
+        }
+
+        /// <summary>
+        /// Turns away anyone beyond the crew limit. Only the arrival is considered, so the players
+        /// already aboard are never disturbed, and a seat freed by someone leaving is immediately
+        /// available again because the count simply drops.
+        /// </summary>
+        private void EnforceCrewSize(ulong clientId)
+        {
+            if (NetworkManager.Singleton == null || !NetworkManager.Singleton.IsServer)
+            {
+                return;
+            }
+
+            // The host is a client of its own session and must never be the one shown the door.
+            if (clientId == NetworkManager.Singleton.LocalClientId)
+            {
+                return;
+            }
+
+            if (NetworkManager.Singleton.ConnectedClientsIds.Count <= _maxCrewSize)
+            {
+                return;
+            }
+
+            GameLog.Warn(LogCategory.Network, $"Crew is full at {_maxCrewSize}; turning away client {clientId}.");
+            NetworkManager.Singleton.DisconnectClient(clientId);
+        }
 
         /// <summary>Set while trading a host session for a client one, so the swap cannot overlap itself.</summary>
         private bool _isSwitchingSession;
